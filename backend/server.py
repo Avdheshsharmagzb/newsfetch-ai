@@ -368,15 +368,20 @@ async def fetch_source_items(category: Optional[str], count: int) -> tuple:
     return pool, "demo"
 
 
-async def run_fetch_pipeline(count: int, category: Optional[str]) -> List["Article"]:
-    """Fetch source items (real API or demo), skip duplicates, run AI engine, save as pending drafts."""
+async def run_fetch_pipeline(count: int, category: Optional[str], allow_duplicates: bool = True) -> List["Article"]:
+    """Fetch source items (real API or demo), skip duplicates, run AI engine, save as pending drafts.
+    When allow_duplicates is False (auto-fetch), skip the cycle if nothing new is available
+    to avoid re-processing the demo pool and wasting LLM credits."""
     existing = await db.articles.find({}, {"source_title": 1}).to_list(2000)
     used = {d.get("source_title") for d in existing}
 
     items, source_label = await fetch_source_items(category, count)
     fresh = [n for n in items if n["source_title"] not in used]
     if not fresh:
-        fresh = items  # allow re-processing if everything already seen (demo pool small)
+        if not allow_duplicates:
+            logger.info("Auto-fetch: no new articles available, skipping cycle.")
+            return []
+        fresh = items  # manual fetch may re-process if everything already seen (demo pool small)
     batch = fresh[: max(1, min(count, 10))]
 
     watermark_text = await get_watermark_text()
@@ -592,7 +597,7 @@ async def auto_fetch_loop():
         await asyncio.sleep(interval)
         try:
             logger.info("Auto-fetch cycle starting...")
-            await run_fetch_pipeline(AUTO_FETCH_COUNT, None)
+            await run_fetch_pipeline(AUTO_FETCH_COUNT, None, allow_duplicates=False)
         except Exception as e:
             logger.error(f"Auto-fetch cycle failed: {e}")
 

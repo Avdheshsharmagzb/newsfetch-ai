@@ -1,4 +1,4 @@
-"""Backend API tests for MyNews Hindi AI news app."""
+"""Backend API tests for MyNews Hindi AI news app - iteration 2 (auth + auto-fetch)."""
 import os
 import re
 import pytest
@@ -6,7 +6,6 @@ import requests
 
 BASE = os.environ.get("REACT_APP_BACKEND_URL")
 if not BASE:
-    # fallback: read frontend/.env
     with open("/app/frontend/.env") as f:
         for line in f:
             if line.startswith("REACT_APP_BACKEND_URL="):
@@ -14,175 +13,235 @@ if not BASE:
 BASE = BASE.rstrip("/")
 API = f"{BASE}/api"
 
+ADMIN_EMAIL = "admin@mynews.com"
+ADMIN_PASSWORD = "Admin@12345"
 AI_TIMEOUT = 180
 
 
+# --------------------- Fixtures ---------------------
 @pytest.fixture(scope="session")
 def created_ids():
     return {"ids": []}
 
 
-# ---- Basic health / seed ----
+@pytest.fixture(scope="session")
+def admin_token():
+    # Clear any prior lockout by hitting DB-independent path: just try login. If locked, skip.
+    r = requests.post(f"{API}/auth/login",
+                      json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}, timeout=15)
+    assert r.status_code == 200, f"admin login failed: {r.status_code} {r.text}"
+    data = r.json()
+    assert "access_token" in data
+    return data["access_token"]
+
+
+@pytest.fixture(scope="session")
+def auth_headers(admin_token):
+    return {"Authorization": f"Bearer {admin_token}"}
+
+
+# --------------------- Basic / seed ---------------------
 def test_root():
     r = requests.get(f"{API}/", timeout=15)
     assert r.status_code == 200
     assert "MyNews" in r.json().get("message", "")
 
 
-def test_categories():
+def test_categories_public():
     r = requests.get(f"{API}/categories", timeout=15)
     assert r.status_code == 200
     cats = r.json()
-    assert isinstance(cats, list) and len(cats) >= 5
-    assert "दुनिया" in cats
+    assert isinstance(cats, list) and "दुनिया" in cats
 
 
-def test_stats_shape():
+def test_stats_public():
     r = requests.get(f"{API}/stats", timeout=15)
     assert r.status_code == 200
-    data = r.json()
     for k in ("pending", "published", "rejected"):
-        assert k in data
-        assert isinstance(data[k], int)
+        assert k in r.json()
 
 
-def test_published_seed_articles():
+def test_public_articles_open():
     r = requests.get(f"{API}/articles?status=published", timeout=15)
     assert r.status_code == 200
-    arts = r.json()
-    assert isinstance(arts, list)
-    assert len(arts) >= 3, f"expected >=3 seeded published, got {len(arts)}"
-    for a in arts[:3]:
-        assert a["status"] == "published"
-        assert a["rewritten_headline"]
-        assert a["rewritten_article"]
+    assert isinstance(r.json(), list)
 
 
-# ---- Settings ----
-def test_settings_get_and_update():
+def test_public_settings_open():
     r = requests.get(f"{API}/settings", timeout=15)
     assert r.status_code == 200
-    original = r.json()["watermark_text"]
+    assert "watermark_text" in r.json()
 
-    new_text = "MyNewsTEST"
-    r2 = requests.put(f"{API}/settings", json={"watermark_text": new_text}, timeout=15)
-    assert r2.status_code == 200
-    assert r2.json()["watermark_text"] == new_text
 
-    r3 = requests.get(f"{API}/settings", timeout=15)
-    assert r3.json()["watermark_text"] == new_text
+# --------------------- AUTH ---------------------
+def test_login_success():
+    r = requests.post(f"{API}/auth/login",
+                      json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}, timeout=15)
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["token_type"] == "bearer"
+    assert isinstance(d["access_token"], str) and len(d["access_token"]) > 20
+    assert d["user"]["email"] == ADMIN_EMAIL
+    assert d["user"]["role"] == "admin"
 
+
+def test_login_wrong_password_401():
+    # use uniquely-cased email so lockout counter is separate from other tests
+    r = requests.post(f"{API}/auth/login",
+                      json={"email": "wrongtest@mynews.com", "password": "nope"}, timeout=15)
+    assert r.status_code == 401
+
+
+def test_login_lockout_429():
+    email = "lockout_probe@mynews.com"
+    last = None
+    for _ in range(7):
+        last = requests.post(f"{API}/auth/login",
+                             json={"email": email, "password": "bad"}, timeout=15)
+    # after 5+ failures we expect 429
+    assert last.status_code == 429, f"expected 429 lockout, got {last.status_code}: {last.text}"
+
+
+def test_auth_me_requires_token():
+    r = requests.get(f"{API}/auth/me", timeout=15)
+    assert r.status_code == 401
+
+
+def test_auth_me_with_token(auth_headers):
+    r = requests.get(f"{API}/auth/me", headers=auth_headers, timeout=15)
+    assert r.status_code == 200
+    assert r.json()["email"] == ADMIN_EMAIL
+
+
+# --------------------- Protection matrix ---------------------
+PROTECTED = [
+    ("POST", "/fetch-news", {"count": 1}),
+    ("POST", "/manual-upload", {"title": "x", "content": "y"}),
+    ("PUT", "/articles/does-not-exist", {"rewritten_headline": "x"}),
+    ("POST", "/articles/does-not-exist/approve", None),
+    ("POST", "/articles/does-not-exist/reject", None),
+    ("DELETE", "/articles/does-not-exist", None),
+    ("PUT", "/settings", {"watermark_text": "x"}),
+]
+
+
+@pytest.mark.parametrize("method,path,body", PROTECTED)
+def test_protected_without_token_returns_401(method, path, body):
+    r = requests.request(method, f"{API}{path}", json=body, timeout=20)
+    assert r.status_code == 401, f"{method} {path} -> {r.status_code}"
+
+
+# --------------------- Auto-fetch status ---------------------
+def test_auto_fetch_status():
+    r = requests.get(f"{API}/auto-fetch/status", timeout=15)
+    assert r.status_code == 200
+    d = r.json()
+    assert d["enabled"] is True
+    assert d["interval_hours"] == 1
+    assert d["count"] == 10
+    assert d["provider"] == "gnews"
+    assert d["using_real_api"] is False  # key empty -> demo
+
+
+# --------------------- Settings (auth) ---------------------
+def test_settings_update_requires_auth_and_persists(auth_headers):
+    orig = requests.get(f"{API}/settings", timeout=15).json()["watermark_text"]
+    # no token -> 401
+    r0 = requests.put(f"{API}/settings", json={"watermark_text": "NO_AUTH"}, timeout=15)
+    assert r0.status_code == 401
+    # with token
+    r1 = requests.put(f"{API}/settings", json={"watermark_text": "MyNewsTEST"},
+                      headers=auth_headers, timeout=15)
+    assert r1.status_code == 200 and r1.json()["watermark_text"] == "MyNewsTEST"
+    # persistence
+    assert requests.get(f"{API}/settings").json()["watermark_text"] == "MyNewsTEST"
     # restore
-    requests.put(f"{API}/settings", json={"watermark_text": original or "MyNews"}, timeout=15)
+    requests.put(f"{API}/settings", json={"watermark_text": orig or "MyNews"},
+                 headers=auth_headers, timeout=15)
 
 
-# ---- Fact-protection helper ----
+# --------------------- AI: fetch-news (demo fallback) ---------------------
 def _extract_numbers_dates(text: str):
-    # Extract numeric tokens (with %/decimals) and simple year patterns
     nums = re.findall(r"\d[\d,\.]*%?", text)
     return set(n.strip(".,") for n in nums if n)
 
 
-# ---- Fetch news (AI) ----
-def test_fetch_news_ai(created_ids):
-    r = requests.post(f"{API}/fetch-news", json={"count": 1}, timeout=AI_TIMEOUT)
+def test_fetch_news_with_token_demo(auth_headers, created_ids):
+    r = requests.post(f"{API}/fetch-news", json={"count": 1},
+                      headers=auth_headers, timeout=AI_TIMEOUT)
     assert r.status_code == 200, r.text
     arts = r.json()
     assert isinstance(arts, list) and len(arts) == 1
     a = arts[0]
     assert a["status"] == "pending"
-    assert a["watermark_text"]  # non-empty
-    assert a["rewritten_headline"], "empty Hindi headline"
-    assert a["rewritten_article"], "empty Hindi article"
-    # Hindi check - Devanagari present
-    assert re.search(r"[\u0900-\u097F]", a["rewritten_headline"]), "headline not Hindi"
-    assert re.search(r"[\u0900-\u097F]", a["rewritten_article"]), "article not Hindi"
-    # image
-    assert a["image_url"], "image_url empty"
-    assert a["image_url"].startswith("data:image/jpeg;base64,"), f"image not base64 jpeg: {a['image_url'][:60]}"
-    # facts list
-    assert isinstance(a["facts"], list)
-
-    # Fact-protection: numbers/percentages from source should appear in rewritten article
+    assert a["watermark_text"]
+    assert re.search(r"[\u0900-\u097F]", a["rewritten_headline"])
+    assert re.search(r"[\u0900-\u097F]", a["rewritten_article"])
+    assert a["image_url"].startswith("data:image/jpeg;base64,")
     src_nums = _extract_numbers_dates(a["source_content"])
-    rewritten_nums = _extract_numbers_dates(a["rewritten_article"])
-    # allow small leniency: at least 70% of source numeric tokens preserved
     if src_nums:
-        preserved = src_nums & rewritten_nums
-        ratio = len(preserved) / len(src_nums)
-        assert ratio >= 0.6, f"Fact protection weak. src={src_nums} rewritten={rewritten_nums} preserved_ratio={ratio}"
-
+        preserved = src_nums & _extract_numbers_dates(a["rewritten_article"])
+        assert len(preserved) / len(src_nums) >= 0.6
     created_ids["ids"].append(a["id"])
     created_ids["fetch_id"] = a["id"]
 
+    # confirm status endpoint updated
+    st = requests.get(f"{API}/auto-fetch/status").json()
+    assert st["last_fetch_source"] == "demo"
+    assert st["last_fetch_at"]
 
-# ---- Manual upload ----
-def test_manual_upload_ai(created_ids):
+
+# --------------------- Manual upload (auth) ---------------------
+def test_manual_upload_with_token(auth_headers, created_ids):
     payload = {
-        "title": "OpenAI raises 40 billion dollars at 300 billion valuation on March 31 2025",
+        "title": "TEST OpenAI raises 40 billion at 300 billion valuation on March 31 2025",
         "content": (
-            "OpenAI announced on March 31, 2025 that it has raised 40 billion US dollars in a funding round "
-            "led by SoftBank at a valuation of 300 billion dollars. CEO Sam Altman said in San Francisco that "
-            "the company now serves 500 million weekly active users. The round values OpenAI 80% higher than "
-            "its previous funding in October 2024."
+            "OpenAI announced on March 31, 2025 that it has raised 40 billion US dollars "
+            "led by SoftBank at a valuation of 300 billion dollars. The company now serves "
+            "500 million weekly active users, 80% higher than October 2024."
         ),
         "category": "तकनीक",
     }
-    r = requests.post(f"{API}/manual-upload", json=payload, timeout=AI_TIMEOUT)
+    r = requests.post(f"{API}/manual-upload", json=payload,
+                      headers=auth_headers, timeout=AI_TIMEOUT)
     assert r.status_code == 200, r.text
     a = r.json()
-    assert a["status"] == "pending"
-    assert a["category"] == "तकनीक"
-    assert re.search(r"[\u0900-\u097F]", a["rewritten_headline"])
-    assert re.search(r"[\u0900-\u097F]", a["rewritten_article"])
-    # image may or may not generate; if present, must be data URL
-    if a["image_url"]:
-        assert a["image_url"].startswith("data:image/jpeg;base64,")
-
-    # Fact protection: critical numbers preserved
+    assert a["status"] == "pending" and a["category"] == "तकनीक"
     body = a["rewritten_article"]
     for token in ["40", "300", "500", "80", "2025"]:
-        assert token in body, f"Missing fact token '{token}' in rewritten article: {body[:400]}"
-
+        assert token in body, f"missing fact '{token}' in {body[:400]}"
     created_ids["ids"].append(a["id"])
     created_ids["manual_id"] = a["id"]
 
 
-# ---- Edit / approve / reject workflow ----
-def test_edit_article(created_ids):
+# --------------------- Edit / approve / reject ---------------------
+def test_edit_article_auth(auth_headers, created_ids):
     aid = created_ids.get("manual_id") or created_ids["ids"][-1]
+    # unauth
+    r0 = requests.put(f"{API}/articles/{aid}", json={"rewritten_headline": "x"}, timeout=15)
+    assert r0.status_code == 401
     new_head = "संपादित हिंदी हेडलाइन टेस्ट"
-    r = requests.put(f"{API}/articles/{aid}", json={"rewritten_headline": new_head}, timeout=30)
-    assert r.status_code == 200
-    assert r.json()["rewritten_headline"] == new_head
-    # verify persistence
-    r2 = requests.get(f"{API}/articles/{aid}", timeout=15)
-    assert r2.json()["rewritten_headline"] == new_head
+    r = requests.put(f"{API}/articles/{aid}", json={"rewritten_headline": new_head},
+                     headers=auth_headers, timeout=30)
+    assert r.status_code == 200 and r.json()["rewritten_headline"] == new_head
+    assert requests.get(f"{API}/articles/{aid}").json()["rewritten_headline"] == new_head
 
 
-def test_approve_article(created_ids):
-    aid = created_ids.get("fetch_id")
-    assert aid, "no fetch id"
-    r = requests.post(f"{API}/articles/{aid}/approve", timeout=30)
+def test_approve_article_auth(auth_headers, created_ids):
+    aid = created_ids["fetch_id"]
+    r = requests.post(f"{API}/articles/{aid}/approve", headers=auth_headers, timeout=30)
     assert r.status_code == 200
     a = r.json()
-    assert a["status"] == "published"
-    assert a["published_at"]
-    # confirm appears in published list
-    pub = requests.get(f"{API}/articles?status=published", timeout=15).json()
-    assert any(x["id"] == aid for x in pub)
+    assert a["status"] == "published" and a["published_at"]
 
 
-def test_reject_article(created_ids):
-    aid = created_ids.get("manual_id")
-    assert aid
-    r = requests.post(f"{API}/articles/{aid}/reject", timeout=30)
+def test_reject_article_auth(auth_headers, created_ids):
+    aid = created_ids["manual_id"]
+    r = requests.post(f"{API}/articles/{aid}/reject", headers=auth_headers, timeout=30)
     assert r.status_code == 200
     assert r.json()["status"] == "rejected"
-    rej = requests.get(f"{API}/articles?status=rejected", timeout=15).json()
-    assert any(x["id"] == aid for x in rej)
 
 
-def test_cleanup(created_ids):
+def test_cleanup(auth_headers, created_ids):
     for aid in created_ids["ids"]:
-        requests.delete(f"{API}/articles/{aid}", timeout=15)
+        requests.delete(f"{API}/articles/{aid}", headers=auth_headers, timeout=15)

@@ -1,0 +1,21 @@
+{
+  "summary": "Iteration 2 (JWT admin auth + protected mutating routes + auto-fetch loop with GNews/NewsData adapter falling back to DEMO when key empty) fully tested. Backend: 25/25 pytest tests passed including login success, login 401 on wrong password, brute-force lockout to 429 after 5+ attempts, /auth/me with & without Bearer token, parametrized 401 check on all 7 mutating endpoints (POST /fetch-news, /manual-upload, PUT /articles/{id}, POST approve, POST reject, DELETE, PUT /settings), public routes still open, /auto-fetch/status shape (enabled=true, interval_hours=1, count=10, provider=gnews, using_real_api=false since key empty, last_fetch_source/at set after a fetch), full AI pipeline with token: Hindi Devanagari rewrite, watermarked JPEG data-URL image, fact-protection (40/300/500/80/2025 preserved verbatim from manual upload; >=60% of source numeric tokens preserved in demo fetch). Frontend Playwright: visiting /admin without token redirects to /login; wrong password shows login-error 'ईमेल या पासवर्ड गलत है'; correct admin creds land on /admin with token in localStorage['mynews_token'] (len=160); auto-fetch-badge shows 'ऑटो-फेच चालू · हर 1 घंटे · 10 खबरें · डेमो डेटा (API key जोड़ें) · पिछली बार: अभी'; fetch-news-btn and manual-upload-btn visible with token auto-attached via axios interceptor; logout-btn clears token and redirects to /login. Note: auto-fetch background loop clearly executed on server startup (last_fetch_at populated and published count grew to 8 during testing).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "auto_fetch_loop sleeps FIRST then fetches; the 'last_fetch_at' in status starts empty until first cycle (1h). Consider running one immediate fetch on startup or documenting that behaviour. In this iteration it was already populated because the loop had run before we tested.",
+    "Login lockout is per (client_ip, email); behind a load balancer/proxy request.client.host may be the LB IP, causing shared lockouts. Consider using X-Forwarded-For or per-email only.",
+    "seed_admin() correctly updates password if env changes, but uses ADMIN_EMAIL.lower() vs plain ADMIN_EMAIL comparison — fine here. bcrypt hashes start with $2b$ as required.",
+    "JWT secret default 'change-me' fallback is safe since production .env sets a strong value, but consider failing fast when JWT_SECRET is unset.",
+    "server.py is 638 lines and continues to grow — recommend splitting into routers/auth.py, routers/articles.py, services/ai.py, services/news_provider.py before adding more features."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin@mynews.com / Admin@12345 (seeded)",
+  "seed_data_creation": "Existing SEED_ARTICLES still seeded on cold start; admin user seeded via seed_admin(). Auto-fetch loop had already generated pending drafts before tests ran; test cleanup deletes any TEST-prefixed articles it creates.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend test file at /app/backend/tests/backend_test.py now uses admin_token fixture (session-scoped). Uses parametrized protection matrix. GNEWS_API_KEY intentionally empty — do NOT set it in .env; fallback is validated. Watermark setting is restored after edit test. Lockout test uses a probe email so it does not interfere with the admin login fixture."
+}

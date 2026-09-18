@@ -1,0 +1,134 @@
+{
+  "project_info": {
+    "name": "MyNews - AI News Engine & Hindi Publishing Platform",
+    "app_type": "hybrid_fullstack (news publication + admin moderation dashboard)",
+    "primary_language": "Hindi (Devanagari script) with English UI toggles for Admin",
+    "target_audience": "Hindi news readers seeking verified, high-quality rephrased news; Editorial team & admin moderators supervising AI processing pipeline"
+  },
+  "design_archetype": {
+    "name": "SWISS EDITORIAL & HIGH-CONTRAST DATA (Archetype 4 + Editorial)",
+    "vibe": "Authoritative, urgent newsroom, tactile print newspaper meets high-tech AI moderation dashboard",
+    "personality_keywords": ["Editorial Authority", "Fact-Checked Precision", "Devanagari Elegance", "Tactical AI Pipeline"],
+    "theme_strategy": "Light 'Newsprint' (#FAF7F2) base for public news pages with crisp crimson (#C8102E) breaking news accents; High-density dark/light hybrid studio for Admin Moderation Dashboard"
+  },
+  "typography": {
+    "google_fonts_import": "https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;500;600;700;800&family=Rozha+One&family=Tiro+Devanagari+Hindi:ital@0;1&family=JetBrains+Mono:wght@400;600&family=Cabinet+Grotesk:wght@700;800;900&display=swap",
+    "headings": {
+      "font_family": "'Tiro Devanagari Hindi', 'Rozha One', serif",
+      "font_weight": "700",
+      "letter_spacing": "tracking-normal",
+      "line_height": "leading-snug (1.35 to 1.5 to accommodate Devanagari matras without clipping)",
+      "usage_rules": "Main H1/H2 Hindi news headlines MUST use Tiro Devanagari Hindi or Rozha One for editorial gravitas. Never use standard sans-serif for story titles."
+    },
+    "body": {
+      "font_family": "'Noto Sans Devanagari', -apple-system, sans-serif",
+      "font_weight": "400 or 500",
+      "line_height": "leading-relaxed (1.65 to 1.8)",
+      "font_size_min": "16px (1rem) for mobile legibility of intricate vowel marks"
+    },
+    "admin_metrics_and_code": {
+      "font_family": "'JetBrains Mono', 'Cabinet Grotesk', monospace",
+      "usage_rules": "Fact diff comparison, numerical statistics, timestamp metadata, watermark parameters, and status tags in Admin Dashboard"
+    },
+    "text_hierarchy": {
+      "h1_hero": "text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight leading-snug",
+      "h2_section": "text-2xl sm:text-3xl lg:text-4xl font-bold border-b-2 border-primary/20 pb-2",
+      "h3_card_title": "text-lg sm:text-xl lg:text-2xl font-semibold leading-snug hover:text-crimson transition-colors",
+      "body_article": "text-base sm:text-lg leading-relaxed text-slate-800 dark:text-slate-200",
+      "label_eyebrow": "text-xs font-mono uppercase tracking-[0.2em] font-semibold text-crimson"
+    }
+  },
+  "colors": {
+    "palette": {
+      "paper_bg": "#FAF7F2",
+      "paper_card": "#FFFFFF",
+      "crimson_primary": "#C8102E",
+      "crimson_hover": "#A00C23",
+      "saffron_accent": "#FF9933",
+      "emerald_fact_verified": "#059669",
+      "amber_pending": "#D97706",
+      "rose_rejected": "#E11D48",
+      "charcoal_text": "#121316",
+      "slate_muted": "#52525B",
+      "border_newspaper": "#E4E0D8",
+      "dashboard_dark_bg": "#0D0F12",
+      "dashboard_dark_card": "#161920",
+      "dashboard_dark_border": "#272A34"
+    },
+    "semantic_usage": {
+      "public_site": {
+        "bg": "bg-[#FAF7F2] dark:bg-[#0D0F12]",
+        "card": "bg-white dark:bg-[#161920] border border-[#E4E0D8] dark:border-[#272A34]",
+        "primary_cta": "bg-[#C8102E] hover:bg-[#A00C23] text-white shadow-md shadow-red-900/10",
+        "badge_breaking": "bg-[#C8102E] text-white font-mono text-xs px-2.5 py-0.5 rounded-sm animate-pulse",
+        "fact_shield": "bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800"
+      },
+      "admin_dashboard": {
+        "bg": "bg-[#0F1117] text-slate-100",
+        "panel": "bg-[#181B24] border border-[#2B303E]",
+        "diff_added": "bg-emerald-950/60 text-emerald-300 border-l-4 border-emerald-500 p-3 rounded-r-md",
+        "diff_original": "bg-rose-950/40 text-rose-300 border-l-4 border-rose-500 p-3 rounded-r-md opacity-80",
+        "watermark_badge": "bg-amber-500/10 text-amber-400 border border-amber-500/30 font-mono text-xs"
+      }
+    }
+  },
+  "spacing_and_layout": {
+    "public_homepage": {
+      "hero_layout": "Swiss grid asymmetrical split: 8 cols for main top breaking story with large image + 4 cols for 'ताज़ा ख़बरें' (Live Speed Feed list)",
+      "category_grid": "Bento Grid: 1 large feature card (col-span-2) + 4 standard news cards (col-span-1) with category badges",
+      "grid_gaps": "gap-6 md:gap-8",
+      "container_padding": "px-4 sm:px-8 lg:px-12 py-8"
+    },
+    "admin_dashboard": {
+      "layout": "High-Density 3-Column Studio Layout: Left sidebar (Categories, Fetch Controls, API Filters) + Center pipeline list (AI Rewritten Articles with Diff View) + Right Inspector Drawer (Fact Guard Checklist, Watermark Preview, Approval Actions)",
+      "gap": "gap-4",
+      "padding": "p-4 sm:p-6"
+    }
+  },
+  "key_components": {
+    "header_nav": {
+      "public": "Classic Newspaper Header with live date in Hindi, breaking news ticker banner, search input, category tab pills, and Admin Studio quick access button",
+      "admin": "Command Center Header with live AI Queue Status indicator, 'Manual Fetch News' trigger button, pending approval counters, and Watermark Settings modal trigger"
+    },
+    "news_card": {
+      "features": "AI Processed Badge, Watermarked Image with 'MyNews' branding overlay, Fact Protection Verified Tag, Category Tag, Published Time in Hindi (e.g. '10 मिनट पहले'), Bookmark & Share buttons",
+      "interactive": "Hover zoom on image (scale-105 duration-300), line-clamp-2 on rewritten headline, line-clamp-3 on summary"
+    },
+    "diff_comparison_viewer": {
+      "description": "Side-by-side or stacked view in Admin comparing 'मूल खबर (Original English/Hindi Source)' vs 'AI रीराइट (Rewritten Clickable Hindi Header & Article)'. Highlights extracted facts (Dates, Names, Locations, Figures) in bold pill badges to ensure zero hallucination."
+    },
+    "watermark_preview_canvas": {
+      "description": "Live canvas view showing how the website watermark ('MyNews' by default) is placed on top of AI-generated replacement images with opacity, position, and font size controls."
+    }
+  },
+  "image_urls": {
+    "hero_news_studio": "https://images.unsplash.com/photo-1769699167906-a44d5ae50abb?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNDR8MHwxfHNlYXJjaHszfHxicmVha2luZyUyMG5ld3MlMjBqb3VybmFsaXN0JTIwc3R1ZGlvJTIwY2FtZXJhfGVufDB8fHx8MTc4OTcwMzYzNHww&ixlib=rb-4.1.0&q=85",
+    "reporter_outdoor": "https://images.pexels.com/photos/10464798/pexels-photo-10464798.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+    "india_architecture_city": "https://images.pexels.com/photos/33305052/pexels-photo-33305052.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+    "india_street_life": "https://images.unsplash.com/photo-1517330357046-3ab5a5dd42a1?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Nzh8MHwxfHNlYXJjaHwyfHxpbmRpYSUyMHN0cmVldCUyMGN1bHR1cmUlMjBhcmNoaXRlY3R1cmUlMjBjaXR5c2NhcGV8ZW58MHx8fHwxNzg5NzAzNjM0fDA&ixlib=rb-4.1.0&q=85",
+    "categories": {
+      "politics": "https://images.unsplash.com/photo-1589279068118-32d43608b1bc?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Nzh8MHwxfHNlYXJjaHwzfHxpbmRpYSUyMHN0cmVldCUyMGN1bHR1cmUlMjBhcmNoaXRlY3R1cmUlMjBjaXR5c2NhcGV8ZW58MHx8fHwxNzg5NzAzNjM0fDA&ixlib=rb-4.1.0&q=85",
+      "technology": "https://images.unsplash.com/photo-1784267978400-167fe8db5d95?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNDR8MHwxfHNlYXJjaHwxfHxicmVha2luZyUyMG5ld3MlMjBqb3VybmFsaXN0JTIwc3R1ZGlvJTIwY2FtZXJhfGVufDB8fHx8MTc4OTcwMzYzNHww&ixlib=rb-4.1.0&q=85"
+    }
+  },
+  "testing_and_data_attributes": {
+    "rule": "ALL interactive buttons, inputs, category tabs, approval actions, diff toggles, and news cards MUST include data-testid attributes.",
+    "examples": [
+      "data-testid='fetch-news-btn'",
+      "data-testid='category-filter-politics'",
+      "data-testid='approve-article-btn-123'",
+      "data-testid='reject-article-btn-123'",
+      "data-testid='edit-rewritten-headline-input'",
+      "data-testid='watermark-text-input'",
+      "data-testid='article-card-headline'",
+      "data-testid='fact-shield-badge'"
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Inject Google Fonts link for Devanagari fonts ('Tiro Devanagari Hindi', 'Noto Sans Devanagari', 'Rozha One') directly into index.html or top of index.css.",
+    "Implement the 'MyNews' custom watermark component over article images using CSS positioning + HTML5 Canvas so moderators can preview and change watermark text ('MyNews').",
+    "Ensure Fact Protection UI clearly highlights extracted facts (names, places, numbers, dates) in both original and rewritten texts with green badges.",
+    "Support Category Selection (e.g. देश/राजनीति, व्यापार, तकनीक, खेल, मनोरंजन, दुनिया) in both public reader feed and admin dashboard.",
+    "Provide a simulated or real News API fetching worker in backend/frontend mock with instant state updates and toast notifications via 'sonner'."
+  ]
+}

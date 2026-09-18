@@ -1,0 +1,88 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;500;600;700;800&family=Rozha+One&family=Tiro+Devanagari+Hindi:ital@0;1&family=JetBrains+Mono:wght@400;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+    margin: 0;
+    font-family: 'Noto Sans Devanagari', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background-color: #FAF7F2;
+}
+
+.font-display {
+    font-family: 'Tiro Devanagari Hindi', 'Rozha One', serif;
+}
+.font-rozha {
+    font-family: 'Rozha One', serif;
+}
+.font-mono-j {
+    font-family: 'JetBrains Mono', monospace;
+}
+
+::selection {
+    background: #C8102E;
+    color: #fff;
+}
+
+@layer base {
+    :root {
+        --background: 40 33% 96%;
+        --foreground: 220 9% 8%;
+        --card: 0 0% 100%;
+        --card-foreground: 220 9% 8%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 220 9% 8%;
+        --primary: 350 79% 44%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 40 20% 92%;
+        --secondary-foreground: 220 9% 8%;
+        --muted: 40 20% 92%;
+        --muted-foreground: 240 4% 40%;
+        --accent: 40 20% 92%;
+        --accent-foreground: 220 9% 8%;
+        --destructive: 350 79% 44%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 38 22% 87%;
+        --input: 38 22% 87%;
+        --ring: 350 79% 44%;
+        --radius: 0.5rem;
+    }
+    .dark {
+        --background: 222 16% 6%;
+        --foreground: 210 20% 96%;
+        --card: 222 16% 10%;
+        --card-foreground: 210 20% 96%;
+        --popover: 222 16% 10%;
+        --popover-foreground: 210 20% 96%;
+        --primary: 350 79% 50%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 222 14% 16%;
+        --secondary-foreground: 210 20% 96%;
+        --muted: 222 14% 16%;
+        --muted-foreground: 220 10% 60%;
+        --accent: 222 14% 16%;
+        --accent-foreground: 210 20% 96%;
+        --destructive: 350 79% 50%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 222 14% 20%;
+        --input: 222 14% 20%;
+        --ring: 350 79% 50%;
+    }
+}
+
+@layer base {
+    * {
+        @apply border-border;
+    }
+}
+
+@keyframes ticker {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+}
+.animate-ticker {
+    animation: ticker 30s linear infinite;
+}

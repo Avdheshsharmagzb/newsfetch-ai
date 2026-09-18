@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -9,11 +9,13 @@ import base64
 import logging
 import random
 import io
+import bcrypt
+import jwt
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from typing import List, Optional
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from PIL import Image, ImageDraw, ImageFont
 from emergentintegrations.llm.chat import LlmChat, UserMessage
@@ -28,6 +30,22 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY')
+
+# Auth config
+JWT_SECRET = os.environ.get('JWT_SECRET', 'change-me')
+JWT_ALGORITHM = "HS256"
+ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', 'admin@mynews.com')
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'Admin@12345')
+
+# News provider config
+NEWS_PROVIDER = os.environ.get('NEWS_PROVIDER', 'gnews').lower()
+GNEWS_API_KEY = os.environ.get('GNEWS_API_KEY', '').strip()
+NEWSDATA_API_KEY = os.environ.get('NEWSDATA_API_KEY', '').strip()
+
+# Auto-fetch config
+AUTO_FETCH_ENABLED = os.environ.get('AUTO_FETCH_ENABLED', 'true').lower() == 'true'
+AUTO_FETCH_INTERVAL_HOURS = float(os.environ.get('AUTO_FETCH_INTERVAL_HOURS', '1'))
+AUTO_FETCH_COUNT = int(os.environ.get('AUTO_FETCH_COUNT', '10'))
 
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
@@ -236,10 +254,182 @@ async def get_watermark_text() -> str:
     return doc.get("watermark_text", "MyNews") if doc else "MyNews"
 
 
+# ----------------------------- Auth -----------------------------
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    except Exception:
+        return False
+
+
+def create_access_token(email: str) -> str:
+    payload = {
+        "sub": email,
+        "type": "access",
+        "exp": datetime.now(timezone.utc) + timedelta(hours=12),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+async def get_current_user(request: Request) -> dict:
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header[7:] if auth_header.startswith("Bearer ") else None
+    if not token:
+        raise HTTPException(status_code=401, detail="प्रमाणीकरण आवश्यक है")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        if payload.get("type") != "access":
+            raise HTTPException(status_code=401, detail="अमान्य टोकन")
+        user = await db.users.find_one({"email": payload["sub"]}, {"_id": 0, "password_hash": 0})
+        if not user:
+            raise HTTPException(status_code=401, detail="उपयोगकर्ता नहीं मिला")
+        return user
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="सत्र समाप्त हो गया, दोबारा लॉगिन करें")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="अमान्य टोकन")
+
+
+# ----------------------------- Real News Provider -----------------------------
+GNEWS_CATEGORY = {
+    "दुनिया": "world", "व्यापार": "business", "तकनीक": "technology",
+    "खेल": "sports", "मनोरंजन": "entertainment", "राजनीति": "nation",
+}
+
+
+def _gnews_fetch(category: Optional[str], count: int) -> list:
+    cat = GNEWS_CATEGORY.get(category or "", "world")
+    params = {"category": cat, "lang": "en", "max": max(1, min(count, 10)), "apikey": GNEWS_API_KEY}
+    resp = _requests.get("https://gnews.io/api/v4/top-headlines", params=params, timeout=15)
+    resp.raise_for_status()
+    out = []
+    hindi_cat = category or "दुनिया"
+    for a in resp.json().get("articles", []):
+        content = (a.get("content") or "") + " " + (a.get("description") or "")
+        out.append({
+            "source_title": a.get("title", "").strip(),
+            "source_content": content.strip(),
+            "source_name": (a.get("source") or {}).get("name", "GNews"),
+            "category": hindi_cat,
+        })
+    return [x for x in out if x["source_title"]]
+
+
+def _newsdata_fetch(category: Optional[str], count: int) -> list:
+    cat = GNEWS_CATEGORY.get(category or "", "world")
+    params = {"apikey": NEWSDATA_API_KEY, "language": "en", "category": cat}
+    resp = _requests.get("https://newsdata.io/api/1/latest", params=params, timeout=15)
+    resp.raise_for_status()
+    out = []
+    hindi_cat = category or "दुनिया"
+    for a in resp.json().get("results", [])[:max(1, min(count, 10))]:
+        content = (a.get("content") or "") + " " + (a.get("description") or "")
+        out.append({
+            "source_title": (a.get("title") or "").strip(),
+            "source_content": content.strip(),
+            "source_name": a.get("source_name", "NewsData"),
+            "category": hindi_cat,
+        })
+    return [x for x in out if x["source_title"]]
+
+
+async def fetch_source_items(category: Optional[str], count: int) -> tuple:
+    """Return (items, source_label). Uses real News API when a key exists, else demo pool."""
+    if NEWS_PROVIDER == "gnews" and GNEWS_API_KEY:
+        try:
+            items = await asyncio.to_thread(_gnews_fetch, category, count)
+            if items:
+                return items, "gnews"
+        except Exception as e:
+            logger.error(f"GNews fetch failed, falling back to demo: {e}")
+    elif NEWS_PROVIDER == "newsdata" and NEWSDATA_API_KEY:
+        try:
+            items = await asyncio.to_thread(_newsdata_fetch, category, count)
+            if items:
+                return items, "newsdata"
+        except Exception as e:
+            logger.error(f"NewsData fetch failed, falling back to demo: {e}")
+
+    # demo fallback
+    pool = DEMO_NEWS[:]
+    if category:
+        cat_pool = [n for n in pool if n["category"] == category]
+        pool = cat_pool or pool
+    random.shuffle(pool)
+    return pool, "demo"
+
+
+async def run_fetch_pipeline(count: int, category: Optional[str]) -> List["Article"]:
+    """Fetch source items (real API or demo), skip duplicates, run AI engine, save as pending drafts."""
+    existing = await db.articles.find({}, {"source_title": 1}).to_list(2000)
+    used = {d.get("source_title") for d in existing}
+
+    items, source_label = await fetch_source_items(category, count)
+    fresh = [n for n in items if n["source_title"] not in used]
+    if not fresh:
+        fresh = items  # allow re-processing if everything already seen (demo pool small)
+    batch = fresh[: max(1, min(count, 10))]
+
+    watermark_text = await get_watermark_text()
+    results = await asyncio.gather(*[process_item(item, watermark_text) for item in batch])
+    docs = [a.model_dump() for a in results]
+    if docs:
+        await db.articles.insert_many(docs)
+    await db.settings.update_one(
+        {"_id": "global"},
+        {"$set": {"last_fetch_at": datetime.now(timezone.utc).isoformat(),
+                  "last_fetch_source": source_label}},
+        upsert=True,
+    )
+    logger.info(f"Fetched {len(docs)} articles via '{source_label}'.")
+    return results
+
+
 # ----------------------------- Routes -----------------------------
 @api_router.get("/")
 async def root():
     return {"message": "MyNews AI Engine running"}
+
+
+@api_router.post("/auth/login")
+async def login(req: LoginRequest, request: Request):
+    email = req.email.lower().strip()
+    ident = f"{request.client.host if request.client else 'x'}:{email}"
+    attempt = await db.login_attempts.find_one({"_id": ident})
+    now = datetime.now(timezone.utc)
+    if attempt and attempt.get("count", 0) >= 5:
+        locked_until = attempt.get("locked_until")
+        if locked_until and datetime.fromisoformat(locked_until) > now:
+            raise HTTPException(status_code=429, detail="बहुत अधिक प्रयास। 15 मिनट बाद कोशिश करें।")
+
+    user = await db.users.find_one({"email": email})
+    if not user or not verify_password(req.password, user["password_hash"]):
+        await db.login_attempts.update_one(
+            {"_id": ident},
+            {"$inc": {"count": 1},
+             "$set": {"locked_until": (now + timedelta(minutes=15)).isoformat()}},
+            upsert=True,
+        )
+        raise HTTPException(status_code=401, detail="ईमेल या पासवर्ड गलत है")
+
+    await db.login_attempts.delete_one({"_id": ident})
+    token = create_access_token(email)
+    return {"access_token": token, "token_type": "bearer",
+            "user": {"email": user["email"], "name": user.get("name", "Admin"), "role": user.get("role", "admin")}}
+
+
+@api_router.get("/auth/me")
+async def auth_me(user: dict = Depends(get_current_user)):
+    return user
 
 
 @api_router.get("/categories")
@@ -253,35 +443,34 @@ async def read_settings():
 
 
 @api_router.put("/settings", response_model=Settings)
-async def update_settings(s: Settings):
+async def update_settings(s: Settings, user: dict = Depends(get_current_user)):
     await db.settings.update_one({"_id": "global"},
                                  {"$set": {"watermark_text": s.watermark_text}}, upsert=True)
     return s
 
 
-@api_router.post("/fetch-news", response_model=List[Article])
-async def fetch_news(req: FetchRequest):
-    """Fetch fresh foreign news (demo pool), run AI rewrite + image + watermark, save as pending drafts."""
-    existing = await db.articles.find({}, {"source_title": 1}).to_list(1000)
-    used = {d.get("source_title") for d in existing}
-    pool = [n for n in DEMO_NEWS if n["source_title"] not in used]
-    if req.category:
-        pool = [n for n in pool if n["category"] == req.category]
-    if not pool:
-        pool = [n for n in DEMO_NEWS if n["source_title"] not in used] or DEMO_NEWS[:]
-    random.shuffle(pool)
-    batch = pool[: max(1, min(req.count, 4))]
+@api_router.get("/auto-fetch/status")
+async def auto_fetch_status():
+    doc = await db.settings.find_one({"_id": "global"}) or {}
+    return {
+        "enabled": AUTO_FETCH_ENABLED,
+        "interval_hours": AUTO_FETCH_INTERVAL_HOURS,
+        "count": AUTO_FETCH_COUNT,
+        "provider": NEWS_PROVIDER,
+        "using_real_api": bool((NEWS_PROVIDER == "gnews" and GNEWS_API_KEY) or (NEWS_PROVIDER == "newsdata" and NEWSDATA_API_KEY)),
+        "last_fetch_at": doc.get("last_fetch_at"),
+        "last_fetch_source": doc.get("last_fetch_source"),
+    }
 
-    watermark_text = await get_watermark_text()
-    results = await asyncio.gather(*[process_item(item, watermark_text) for item in batch])
-    docs = [a.model_dump() for a in results]
-    if docs:
-        await db.articles.insert_many(docs)
-    return results
+
+@api_router.post("/fetch-news", response_model=List[Article])
+async def fetch_news(req: FetchRequest, user: dict = Depends(get_current_user)):
+    """Fetch fresh foreign news, run AI rewrite + image + watermark, save as pending drafts."""
+    return await run_fetch_pipeline(req.count, req.category)
 
 
 @api_router.post("/manual-upload", response_model=Article)
-async def manual_upload(req: ManualUpload):
+async def manual_upload(req: ManualUpload, user: dict = Depends(get_current_user)):
     """Admin pastes news text (or a link); run it through the same AI engine and save as a pending draft."""
     title = (req.title or "").strip()
     content = (req.content or "").strip()
@@ -334,7 +523,7 @@ async def get_article(article_id: str):
 
 
 @api_router.put("/articles/{article_id}", response_model=Article)
-async def edit_article(article_id: str, edit: EditArticle):
+async def edit_article(article_id: str, edit: EditArticle, user: dict = Depends(get_current_user)):
     update = {k: v for k, v in edit.model_dump().items() if v is not None}
     if update:
         await db.articles.update_one({"id": article_id}, {"$set": update})
@@ -345,7 +534,7 @@ async def edit_article(article_id: str, edit: EditArticle):
 
 
 @api_router.post("/articles/{article_id}/approve", response_model=Article)
-async def approve_article(article_id: str):
+async def approve_article(article_id: str, user: dict = Depends(get_current_user)):
     await db.articles.update_one(
         {"id": article_id},
         {"$set": {"status": "published", "published_at": datetime.now(timezone.utc).isoformat()}})
@@ -356,7 +545,7 @@ async def approve_article(article_id: str):
 
 
 @api_router.post("/articles/{article_id}/reject", response_model=Article)
-async def reject_article(article_id: str):
+async def reject_article(article_id: str, user: dict = Depends(get_current_user)):
     await db.articles.update_one({"id": article_id}, {"$set": {"status": "rejected"}})
     doc = await db.articles.find_one({"id": article_id}, {"_id": 0})
     if not doc:
@@ -365,7 +554,7 @@ async def reject_article(article_id: str):
 
 
 @api_router.delete("/articles/{article_id}")
-async def delete_article(article_id: str):
+async def delete_article(article_id: str, user: dict = Depends(get_current_user)):
     await db.articles.delete_one({"id": article_id})
     return {"ok": True}
 
@@ -379,8 +568,38 @@ async def stats():
     }
 
 
+async def seed_admin():
+    await db.users.create_index("email", unique=True)
+    existing = await db.users.find_one({"email": ADMIN_EMAIL.lower()})
+    if existing is None:
+        await db.users.insert_one({
+            "email": ADMIN_EMAIL.lower(),
+            "password_hash": hash_password(ADMIN_PASSWORD),
+            "name": "Admin",
+            "role": "admin",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        logger.info("Admin user seeded.")
+    elif not verify_password(ADMIN_PASSWORD, existing["password_hash"]):
+        await db.users.update_one({"email": ADMIN_EMAIL.lower()},
+                                  {"$set": {"password_hash": hash_password(ADMIN_PASSWORD)}})
+        logger.info("Admin password updated from env.")
+
+
+async def auto_fetch_loop():
+    interval = max(0.05, AUTO_FETCH_INTERVAL_HOURS) * 3600
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            logger.info("Auto-fetch cycle starting...")
+            await run_fetch_pipeline(AUTO_FETCH_COUNT, None)
+        except Exception as e:
+            logger.error(f"Auto-fetch cycle failed: {e}")
+
+
 @app.on_event("startup")
 async def seed_data():
+    await seed_admin()
     if await db.articles.count_documents({}) == 0:
         for s in SEED_ARTICLES:
             art = Article(
@@ -398,6 +617,10 @@ async def seed_data():
             )
             await db.articles.insert_one(art.model_dump())
         logger.info("Seeded published demo articles.")
+
+    if AUTO_FETCH_ENABLED:
+        asyncio.create_task(auto_fetch_loop())
+        logger.info(f"Auto-fetch loop enabled: every {AUTO_FETCH_INTERVAL_HOURS}h, {AUTO_FETCH_COUNT} articles.")
 
 
 app.include_router(api_router)

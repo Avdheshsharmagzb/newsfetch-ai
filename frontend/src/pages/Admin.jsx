@@ -4,10 +4,11 @@ import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Newspaper, Download, Loader2, Check, X, ShieldCheck, Sparkles,
-  Settings, Clock, CheckCircle2, XCircle, Save, ArrowRight, Upload,
+  Settings, Clock, CheckCircle2, XCircle, Save, ArrowRight, Upload, LogOut, Zap,
 } from "lucide-react";
 import { api, CATEGORY_META, timeAgo } from "@/lib/newsApi";
 import { NewsImage } from "@/components/NewsImage";
+import { useAuth } from "@/context/AuthContext";
 
 const TABS = [
   { key: "pending", label: "समीक्षा हेतु लंबित", icon: Clock, color: "text-amber-400" },
@@ -16,6 +17,7 @@ const TABS = [
 ];
 
 export default function Admin() {
+  const { logout } = useAuth();
   const [tab, setTab] = useState("pending");
   const [articles, setArticles] = useState([]);
   const [stats, setStats] = useState({ pending: 0, published: 0, rejected: 0 });
@@ -28,6 +30,7 @@ export default function Admin() {
   const [showUpload, setShowUpload] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [form, setForm] = useState({ title: "", content: "", url: "", category: "दुनिया" });
+  const [autoStatus, setAutoStatus] = useState(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -47,6 +50,7 @@ export default function Admin() {
   useEffect(() => {
     api.get("/categories").then((r) => setCategories(r.data));
     api.get("/settings").then((r) => setWatermark(r.data.watermark_text));
+    api.get("/auto-fetch/status").then((r) => setAutoStatus(r.data)).catch(() => {});
   }, []);
 
   const fetchNews = async () => {
@@ -143,8 +147,28 @@ export default function Admin() {
             <Link to="/" className="text-sm text-slate-400 hover:text-white px-2" data-testid="view-site-link">
               साइट देखें ↗
             </Link>
+            <button
+              onClick={() => { logout(); }}
+              data-testid="logout-btn"
+              className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-rose-400 px-2"
+            >
+              <LogOut className="w-4 h-4" /> लॉगआउट
+            </button>
           </div>
         </div>
+        {autoStatus?.enabled && (
+          <div className="max-w-[1500px] mx-auto px-4 sm:px-6 pb-2">
+            <div
+              data-testid="auto-fetch-badge"
+              className="inline-flex items-center gap-2 text-xs font-mono-j text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-full px-3 py-1"
+            >
+              <Zap className="w-3.5 h-3.5" />
+              ऑटो-फेच चालू · हर {autoStatus.interval_hours} घंटे · {autoStatus.count} खबरें ·
+              {autoStatus.using_real_api ? ` लाइव ${autoStatus.provider.toUpperCase()}` : " डेमो डेटा (API key जोड़ें)"}
+              {autoStatus.last_fetch_at && ` · पिछली बार: ${timeAgo(autoStatus.last_fetch_at)}`}
+            </div>
+          </div>
+        )}
       </header>
 
       <main className="max-w-[1500px] mx-auto px-4 sm:px-6 py-6">

@@ -96,6 +96,7 @@ class ManualUpload(BaseModel):
     content: Optional[str] = ""
     url: Optional[str] = ""
     category: str = "दुनिया"
+    image_base64: Optional[str] = ""
 
 
 class Settings(BaseModel):
@@ -200,7 +201,7 @@ def add_watermark(image_bytes: bytes, text: str = "MyNews") -> str:
     return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
-async def process_item(item: dict, watermark_text: str) -> Article:
+async def process_item(item: dict, watermark_text: str, custom_image_b64: Optional[str] = None) -> Article:
     art = Article(
         source_title=item["source_title"],
         source_content=item.get("source_content", ""),
@@ -208,6 +209,15 @@ async def process_item(item: dict, watermark_text: str) -> Article:
         category=item.get("category", "दुनिया"),
         watermark_text=watermark_text,
     )
+
+    # If admin uploaded their own photo, watermark it and skip AI image generation.
+    if custom_image_b64:
+        try:
+            raw = custom_image_b64.split(",", 1)[1] if "," in custom_image_b64 else custom_image_b64
+            art.image_url = add_watermark(base64.b64decode(raw), watermark_text)
+        except Exception as e:
+            logger.error(f"Custom image watermark failed: {e}")
+
     try:
         rewrite_task = ai_rewrite(item)
         rewrite = await rewrite_task
@@ -215,9 +225,10 @@ async def process_item(item: dict, watermark_text: str) -> Article:
         art.rewritten_article = rewrite.get("rewritten_article", item.get("source_content", ""))
         art.facts = [Fact(**f) for f in rewrite.get("facts", []) if isinstance(f, dict) and f.get("value")]
         art.image_prompt = rewrite.get("image_prompt", art.rewritten_headline)
-        img_bytes = await ai_generate_image(art.image_prompt)
-        if img_bytes:
-            art.image_url = add_watermark(img_bytes, watermark_text)
+        if not art.image_url:  # no custom photo -> generate AI image
+            img_bytes = await ai_generate_image(art.image_prompt)
+            if img_bytes:
+                art.image_url = add_watermark(img_bytes, watermark_text)
         art.ai_processed = True
     except Exception as e:
         logger.error(f"AI processing failed for '{item['source_title']}': {e}")
@@ -509,7 +520,7 @@ async def manual_upload(req: ManualUpload, user: dict = Depends(get_current_user
         "category": req.category or "दुनिया",
     }
     watermark_text = await get_watermark_text()
-    art = await process_item(item, watermark_text)
+    art = await process_item(item, watermark_text, custom_image_b64=(req.image_base64 or None))
     await db.articles.insert_one(art.model_dump())
     return art
 

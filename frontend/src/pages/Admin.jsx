@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Newspaper, Download, Loader2, Check, X, ShieldCheck, Sparkles,
-  Settings, Clock, CheckCircle2, XCircle, Save, ArrowRight, Upload, Zap, LogOut,
+  Settings, Clock, CheckCircle2, XCircle, Save, ArrowRight, Upload, Zap, LogOut, ImagePlus,
 } from "lucide-react";
 import { api, CATEGORY_META, timeAgo, SITE_NAME } from "@/lib/newsApi";
 import { NewsImage } from "@/components/NewsImage";
@@ -29,7 +29,7 @@ export default function Admin() {
   const [showSettings, setShowSettings] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [form, setForm] = useState({ title: "", content: "", url: "", category: "दुनिया" });
+  const [form, setForm] = useState({ title: "", content: "", url: "", category: "दुनिया", image_base64: "" });
   const [autoStatus, setAutoStatus] = useState(null);
 
   const refresh = useCallback(async () => {
@@ -74,6 +74,16 @@ export default function Admin() {
     setShowSettings(false);
   };
 
+  const onPickPhoto = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { toast.error("कृपया एक इमेज फ़ाइल चुनें"); return; }
+    if (file.size > 8 * 1024 * 1024) { toast.error("फोटो 8MB से छोटी होनी चाहिए"); return; }
+    const reader = new FileReader();
+    reader.onload = () => setForm((f) => ({ ...f, image_base64: reader.result }));
+    reader.readAsDataURL(file);
+  };
+
   const submitUpload = async () => {
     if (!form.content.trim() && !form.url.trim()) {
       toast.error("कृपया खबर का टेक्स्ट पेस्ट करें या एक लिंक दें।");
@@ -85,7 +95,7 @@ export default function Admin() {
       await api.post("/manual-upload", form);
       toast.success("खबर प्रोसेस होकर 'लंबित' सूची में जुड़ गई", { id: "upload" });
       setShowUpload(false);
-      setForm({ title: "", content: "", url: "", category: "दुनिया" });
+      setForm({ title: "", content: "", url: "", category: "दुनिया", image_base64: "" });
       setTab("pending");
       await refresh();
     } catch (e) {
@@ -285,6 +295,44 @@ export default function Admin() {
               />
               <p className="text-[11px] text-slate-500 mt-1">
                 लिंक देने पर सिस्टम पेज से टेक्स्ट निकालने की कोशिश करेगा (कुछ साइट्स ब्लॉक कर सकती हैं — तब टेक्स्ट पेस्ट करें)।
+              </p>
+            </div>
+
+            <div className="mt-3">
+              <label className="text-xs font-mono-j text-slate-400 uppercase tracking-wider">अपनी फोटो (वैकल्पिक)</label>
+              {form.image_base64 ? (
+                <div className="mt-1 flex items-center gap-3">
+                  <div className="relative">
+                    <img
+                      src={form.image_base64}
+                      alt="preview"
+                      data-testid="upload-photo-preview"
+                      className="w-28 h-20 object-cover rounded-md border border-[#2B303E]"
+                    />
+                    <span className="absolute bottom-1 right-1 bg-[#C8102E]/90 text-white text-[8px] font-mono-j px-1 rounded-sm">
+                      Ghaziabad Times
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, image_base64: "" }))}
+                    data-testid="remove-photo-btn"
+                    className="text-xs text-rose-400 hover:text-rose-300 font-semibold"
+                  >
+                    हटाएँ
+                  </button>
+                </div>
+              ) : (
+                <label
+                  data-testid="upload-photo-label"
+                  className="mt-1 flex items-center gap-2 cursor-pointer bg-[#0F1117] border border-dashed border-[#2B303E] hover:border-[#C8102E] rounded-md px-3 py-2.5 text-sm text-slate-400 w-fit"
+                >
+                  <ImagePlus className="w-4 h-4 text-[#C8102E]" /> फोटो चुनें
+                  <input type="file" accept="image/*" onChange={onPickPhoto} className="hidden" data-testid="upload-photo-input" />
+                </label>
+              )}
+              <p className="text-[11px] text-slate-500 mt-1">
+                फोटो दें तो उस पर अपने-आप "Ghaziabad Times" वाटरमार्क लगेगा। फोटो न दें तो AI अपने-आप इमेज बना देगा।
               </p>
             </div>
 

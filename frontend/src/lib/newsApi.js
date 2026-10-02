@@ -19,7 +19,9 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (r) => r,
   (err) => {
-    if (err?.response?.status === 401) {
+    const url = err?.config?.url || "";
+    const isLogin = url.includes("/auth/login");
+    if (err?.response?.status === 401 && !isLogin) {
       localStorage.removeItem(TOKEN_KEY);
       if (window.location.pathname.startsWith("/admin")) {
         window.location.href = "/admin";

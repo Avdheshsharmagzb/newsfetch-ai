@@ -1,0 +1,27 @@
+{
+  "summary": "Targeted frontend re-test of the '/admin dashboard not visible' bug after the inline-login fix. All 6 critical assertions from the review request PASS. The /admin route now shows the secure login form inline when logged out (URL stays /admin), correct credentials reveal the full admin dashboard, token persists across reload, logout returns to the login form, the public home page is unaffected (no admin/login links visible to public), and backend protection is intact (POST /api/fetch-news without token = 401, login API returns 200). One minor UX issue found: on wrong-password submission the <login-error> element never becomes visible because the global 401 axios interceptor in newsApi.js forces window.location.href='/admin', which full-page-reloads and unmounts the Login component before the error state renders. The security behaviour (dashboard remains hidden) is correct; only the inline error UX is affected.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Login.jsx + lib/newsApi.js (401 interceptor)", "issue": "Wrong-password attempt at /admin inline login triggers window.location.href='/admin' from the global 401 interceptor, which reloads the page and prevents the login-error message from ever being displayed to the user. The Login component sets error state but is unmounted immediately. Dashboard remains hidden (security OK) but user gets no visible feedback on failed login. Suggested fix: in newsApi.js 401 interceptor, skip the redirect when the failing request URL is the login endpoint (/api/auth/login) so Login.jsx can render its error state.", "selector": "[data-testid=\"login-error\"]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/test_reports/iteration_5.json"],
+  "action_items": [
+    "In /app/frontend/src/lib/newsApi.js 401 interceptor, do NOT redirect when the failed request is the login call (err.config.url ends with /api/auth/login). Let the Login form display login-error instead of hard-reloading /admin."
+  ],
+  "critical_code_review_comments": [
+    "newsApi.js 401 interceptor is too aggressive: it fires on login failures too, swallowing the error UI. Exempt the auth/login endpoint.",
+    "Rest of the auth flow (JWT in localStorage gt_token, ProtectedRoute inline <Login/>, logout clearing token) is clean and works end-to-end."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "92% (6/6 critical assertions pass; 1 minor UX miss on failed-login error display)"},
+  "test_credentials": "admin@ghaziabadtimes.com / Gzb#Times@2026$Secure (verified working)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Core bug ('dashboard not visible at /admin') is fully resolved. /admin now renders Login inline when logged out; dashboard renders after successful login; token persists; logout works; public home has no admin link; backend /api/fetch-news requires auth. Only remaining nit: wrong-password UX never shows login-error due to a full-page reload from the global 401 interceptor in src/lib/newsApi.js (line 22-27). Easy fix: skip redirect for /api/auth/login failures.",
+  "rca of the issue": "Original bug: ProtectedRoute used <Navigate to='/control-login'>, so visiting /admin bounced to an obscure URL and the user felt the dashboard was gone. Fix: ProtectedRoute now returns <Login/> inline when !user, keeping the URL on /admin. Verified via Playwright: inline-login visible at /admin, correct creds reveal tab-pending/published/rejected + fetch-news-btn + manual-upload-btn + auto-fetch-badge; reload preserves session via gt_token in localStorage."
+}

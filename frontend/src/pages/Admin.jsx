@@ -4,10 +4,11 @@ import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Newspaper, Download, Loader2, Check, X, ShieldCheck, Sparkles,
-  Settings, Clock, CheckCircle2, XCircle, Save, ArrowRight, Upload, Zap,
+  Settings, Clock, CheckCircle2, XCircle, Save, ArrowRight, Upload, Zap, LogOut,
 } from "lucide-react";
-import { api, CATEGORY_META, timeAgo } from "@/lib/newsApi";
+import { api, CATEGORY_META, timeAgo, SITE_NAME } from "@/lib/newsApi";
 import { NewsImage } from "@/components/NewsImage";
+import { useAuth } from "@/context/AuthContext";
 
 const TABS = [
   { key: "pending", label: "समीक्षा हेतु लंबित", icon: Clock, color: "text-amber-400" },
@@ -16,6 +17,7 @@ const TABS = [
 ];
 
 export default function Admin() {
+  const { logout } = useAuth();
   const [tab, setTab] = useState("pending");
   const [articles, setArticles] = useState([]);
   const [stats, setStats] = useState({ pending: 0, published: 0, rejected: 0 });
@@ -23,7 +25,7 @@ export default function Admin() {
   const [fetching, setFetching] = useState(false);
   const [loading, setLoading] = useState(true);
   const [fetchCat, setFetchCat] = useState("");
-  const [watermark, setWatermark] = useState("MyNews");
+  const [watermark, setWatermark] = useState("Ghaziabad Times");
   const [showSettings, setShowSettings] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -67,7 +69,7 @@ export default function Admin() {
   };
 
   const saveWatermark = async () => {
-    await api.put("/settings", { watermark_text: watermark || "MyNews" });
+    await api.put("/settings", { watermark_text: watermark || "Ghaziabad Times" });
     toast.success("वाटरमार्क सेटिंग सहेजी गई");
     setShowSettings(false);
   };
@@ -101,9 +103,9 @@ export default function Admin() {
         <div className="max-w-[1500px] mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4 flex-wrap">
           <Link to="/" className="flex items-center gap-2" data-testid="admin-logo">
             <Newspaper className="w-6 h-6 text-[#C8102E]" />
-            <span className="font-display text-2xl">MyNews</span>
+            <span className="font-display text-2xl">{SITE_NAME}</span>
             <span className="text-[10px] font-mono-j uppercase tracking-[0.2em] text-slate-500 border-l border-[#2B303E] pl-2">
-              एडमिन स्टूडियो
+              कंट्रोल पैनल
             </span>
           </Link>
 
@@ -145,6 +147,13 @@ export default function Admin() {
             <Link to="/" className="text-sm text-slate-400 hover:text-white px-2" data-testid="view-site-link">
               साइट देखें ↗
             </Link>
+            <button
+              onClick={() => { logout(); window.location.href = "/control-login"; }}
+              data-testid="logout-btn"
+              className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-rose-400 px-2"
+            >
+              <LogOut className="w-4 h-4" /> लॉगआउट
+            </button>
           </div>
         </div>
         {autoStatus?.enabled && (

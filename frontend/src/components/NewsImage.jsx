@@ -1,7 +1,7 @@
 import { ShieldCheck } from "lucide-react";
 
-// Displays a news image with a persistent "MyNews" brand watermark overlay.
-export function NewsImage({ src, alt, watermark = "MyNews", className = "", showFactShield = false }) {
+// Displays a news image with a persistent brand watermark overlay.
+export function NewsImage({ src, alt, watermark = "Ghaziabad Times", className = "", showFactShield = false }) {
   return (
     <div className={`relative overflow-hidden bg-[#E4E0D8] ${className}`}>
       {src ? (
@@ -13,7 +13,7 @@ export function NewsImage({ src, alt, watermark = "MyNews", className = "", show
         />
       ) : (
         <div className="w-full h-full flex items-center justify-center text-[#C8102E] font-display text-2xl">
-          MyNews
+          Ghaziabad Times
         </div>
       )}
       {/* watermark badge (always visible branding) */}

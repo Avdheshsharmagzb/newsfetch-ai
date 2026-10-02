@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -9,11 +9,13 @@ import base64
 import logging
 import random
 import io
+import bcrypt
+import jwt
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from typing import List, Optional
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from PIL import Image, ImageDraw, ImageFont
 from emergentintegrations.llm.chat import LlmChat, UserMessage
@@ -28,6 +30,13 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY')
+
+# Auth config
+JWT_SECRET = os.environ.get('JWT_SECRET', 'change-me')
+JWT_ALGORITHM = "HS256"
+ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', 'admin@ghaziabadtimes.com')
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'Gzb#Times@2026$Secure')
+SITE_NAME = os.environ.get('SITE_NAME', 'Ghaziabad Times')
 
 # News provider config
 NEWS_PROVIDER = os.environ.get('NEWS_PROVIDER', 'gnews').lower()
@@ -65,7 +74,7 @@ class Article(BaseModel):
     facts: List[Fact] = Field(default_factory=list)
     image_prompt: str = ""
     image_url: str = ""          # data URL (base64) or external URL
-    watermark_text: str = "MyNews"
+    watermark_text: str = "Ghaziabad Times"
     status: str = "pending"      # pending | published | rejected
     ai_processed: bool = False
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -90,7 +99,7 @@ class ManualUpload(BaseModel):
 
 
 class Settings(BaseModel):
-    watermark_text: str = "MyNews"
+    watermark_text: str = "Ghaziabad Times"
 
 
 # ----------------------------- AI helpers -----------------------------
@@ -243,7 +252,52 @@ def fetch_url_text(url: str) -> tuple:
 
 async def get_watermark_text() -> str:
     doc = await db.settings.find_one({"_id": "global"})
-    return doc.get("watermark_text", "MyNews") if doc else "MyNews"
+    return doc.get("watermark_text", SITE_NAME) if doc else SITE_NAME
+
+
+# ----------------------------- Auth (security hardening) -----------------------------
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    except Exception:
+        return False
+
+
+def create_access_token(email: str) -> str:
+    payload = {
+        "sub": email,
+        "type": "access",
+        "exp": datetime.now(timezone.utc) + timedelta(hours=12),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+async def get_current_user(request: Request) -> dict:
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header[7:] if auth_header.startswith("Bearer ") else None
+    if not token:
+        raise HTTPException(status_code=401, detail="प्रमाणीकरण आवश्यक है")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        if payload.get("type") != "access":
+            raise HTTPException(status_code=401, detail="अमान्य टोकन")
+        user = await db.users.find_one({"email": payload["sub"]}, {"_id": 0, "password_hash": 0})
+        if not user:
+            raise HTTPException(status_code=401, detail="उपयोगकर्ता नहीं मिला")
+        return user
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="सत्र समाप्त हो गया, दोबारा लॉगिन करें")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="अमान्य टोकन")
 
 
 # ----------------------------- Real News Provider -----------------------------
@@ -349,7 +403,44 @@ async def run_fetch_pipeline(count: int, category: Optional[str], allow_duplicat
 # ----------------------------- Routes -----------------------------
 @api_router.get("/")
 async def root():
-    return {"message": "MyNews AI Engine running"}
+    return {"message": f"{SITE_NAME} AI Engine running", "site_name": SITE_NAME}
+
+
+@api_router.get("/site")
+async def site_info():
+    return {"site_name": SITE_NAME}
+
+
+@api_router.post("/auth/login")
+async def login(req: LoginRequest, request: Request):
+    email = req.email.lower().strip()
+    ident = f"{request.client.host if request.client else 'x'}:{email}"
+    attempt = await db.login_attempts.find_one({"_id": ident})
+    now = datetime.now(timezone.utc)
+    if attempt and attempt.get("count", 0) >= 5:
+        locked_until = attempt.get("locked_until")
+        if locked_until and datetime.fromisoformat(locked_until) > now:
+            raise HTTPException(status_code=429, detail="बहुत अधिक प्रयास। 15 मिनट बाद कोशिश करें।")
+
+    user = await db.users.find_one({"email": email})
+    if not user or not verify_password(req.password, user["password_hash"]):
+        await db.login_attempts.update_one(
+            {"_id": ident},
+            {"$inc": {"count": 1},
+             "$set": {"locked_until": (now + timedelta(minutes=15)).isoformat()}},
+            upsert=True,
+        )
+        raise HTTPException(status_code=401, detail="ईमेल या पासवर्ड गलत है")
+
+    await db.login_attempts.delete_one({"_id": ident})
+    token = create_access_token(email)
+    return {"access_token": token, "token_type": "bearer",
+            "user": {"email": user["email"], "name": user.get("name", "Admin"), "role": user.get("role", "admin")}}
+
+
+@api_router.get("/auth/me")
+async def auth_me(user: dict = Depends(get_current_user)):
+    return user
 
 
 @api_router.get("/categories")
@@ -363,7 +454,7 @@ async def read_settings():
 
 
 @api_router.put("/settings", response_model=Settings)
-async def update_settings(s: Settings):
+async def update_settings(s: Settings, user: dict = Depends(get_current_user)):
     await db.settings.update_one({"_id": "global"},
                                  {"$set": {"watermark_text": s.watermark_text}}, upsert=True)
     return s
@@ -384,13 +475,13 @@ async def auto_fetch_status():
 
 
 @api_router.post("/fetch-news", response_model=List[Article])
-async def fetch_news(req: FetchRequest):
+async def fetch_news(req: FetchRequest, user: dict = Depends(get_current_user)):
     """Fetch fresh foreign news, run AI rewrite + image + watermark, save as pending drafts."""
     return await run_fetch_pipeline(req.count, req.category)
 
 
 @api_router.post("/manual-upload", response_model=Article)
-async def manual_upload(req: ManualUpload):
+async def manual_upload(req: ManualUpload, user: dict = Depends(get_current_user)):
     """Admin pastes news text (or a link); run it through the same AI engine and save as a pending draft."""
     title = (req.title or "").strip()
     content = (req.content or "").strip()
@@ -443,7 +534,7 @@ async def get_article(article_id: str):
 
 
 @api_router.put("/articles/{article_id}", response_model=Article)
-async def edit_article(article_id: str, edit: EditArticle):
+async def edit_article(article_id: str, edit: EditArticle, user: dict = Depends(get_current_user)):
     update = {k: v for k, v in edit.model_dump().items() if v is not None}
     if update:
         await db.articles.update_one({"id": article_id}, {"$set": update})
@@ -454,7 +545,7 @@ async def edit_article(article_id: str, edit: EditArticle):
 
 
 @api_router.post("/articles/{article_id}/approve", response_model=Article)
-async def approve_article(article_id: str):
+async def approve_article(article_id: str, user: dict = Depends(get_current_user)):
     await db.articles.update_one(
         {"id": article_id},
         {"$set": {"status": "published", "published_at": datetime.now(timezone.utc).isoformat()}})
@@ -465,7 +556,7 @@ async def approve_article(article_id: str):
 
 
 @api_router.post("/articles/{article_id}/reject", response_model=Article)
-async def reject_article(article_id: str):
+async def reject_article(article_id: str, user: dict = Depends(get_current_user)):
     await db.articles.update_one({"id": article_id}, {"$set": {"status": "rejected"}})
     doc = await db.articles.find_one({"id": article_id}, {"_id": 0})
     if not doc:
@@ -474,7 +565,7 @@ async def reject_article(article_id: str):
 
 
 @api_router.delete("/articles/{article_id}")
-async def delete_article(article_id: str):
+async def delete_article(article_id: str, user: dict = Depends(get_current_user)):
     await db.articles.delete_one({"id": article_id})
     return {"ok": True}
 
@@ -499,8 +590,30 @@ async def auto_fetch_loop():
             logger.error(f"Auto-fetch cycle failed: {e}")
 
 
+async def seed_admin():
+    await db.users.create_index("email", unique=True)
+    email = ADMIN_EMAIL.lower()
+    existing = await db.users.find_one({"email": email})
+    if existing is None:
+        await db.users.insert_one({
+            "email": email,
+            "password_hash": hash_password(ADMIN_PASSWORD),
+            "name": "Admin",
+            "role": "admin",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        logger.info("Admin user seeded.")
+    elif not verify_password(ADMIN_PASSWORD, existing["password_hash"]):
+        await db.users.update_one({"email": email},
+                                  {"$set": {"password_hash": hash_password(ADMIN_PASSWORD)}})
+        logger.info("Admin password updated from env.")
+
+
 @app.on_event("startup")
 async def seed_data():
+    await seed_admin()
+    # rebrand old watermark text for display consistency
+    await db.articles.update_many({"watermark_text": "MyNews"}, {"$set": {"watermark_text": SITE_NAME}})
     if await db.articles.count_documents({}) == 0:
         for s in SEED_ARTICLES:
             art = Article(

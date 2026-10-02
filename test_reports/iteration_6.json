@@ -1,0 +1,20 @@
+{
+  "summary": "Verified the inline login error fix at /admin. Wrong password now shows the Hindi error message in [data-testid=login-error] without any full-page reload/redirect. Correct admin credentials reveal the dashboard with tab-pending, fetch-news-btn, manual-upload-btn. Token persistence across reload confirmed. Logout returns to inline login form. Public home '/' shows 'Ghaziabad Times' with page-nav-1..4 and no admin link.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped)", "frontend": "100%"},
+  "test_credentials": "admin@ghaziabadtimes.com / Gzb#Times@2026$Secure (used 1 wrong attempt then correct, no lockout risk)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Admin login flow at /admin works end-to-end. Interceptor correctly skips redirect on /auth/login 401. Dashboard elements: tab-pending, fetch-news-btn, manual-upload-btn, logout-btn. Token key: gt_token in localStorage. Public home has page-nav-1..4 and no admin link.",
+  "rca of the issue": "N/A - fix verified"
+}

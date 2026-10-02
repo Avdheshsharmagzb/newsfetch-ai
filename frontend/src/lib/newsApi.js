@@ -22,7 +22,7 @@ api.interceptors.response.use(
     if (err?.response?.status === 401) {
       localStorage.removeItem(TOKEN_KEY);
       if (window.location.pathname.startsWith("/admin")) {
-        window.location.href = "/control-login";
+        window.location.href = "/admin";
       }
     }
     return Promise.reject(err);

@@ -508,6 +508,9 @@ async def manual_upload(req: ManualUpload, user: dict = Depends(get_current_user
     if not content and not title:
         raise HTTPException(status_code=400, detail="कृपया खबर का टेक्स्ट या एक वैध लिंक दें।")
 
+    if req.image_base64 and len(req.image_base64) > 12_000_000:
+        raise HTTPException(status_code=413, detail="फोटो बहुत बड़ी है (अधिकतम ~8MB)।")
+
     if not title:
         title = content[:90]
     if not content:

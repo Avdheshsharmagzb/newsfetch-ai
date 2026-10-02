@@ -272,6 +272,74 @@ def test_reject_article_auth(auth_headers, created_ids):
     assert r.json()["status"] == "rejected"
 
 
+# --------------------- NEW: custom photo upload path ---------------------
+def _tiny_jpeg_b64():
+    import base64 as _b64, io as _io
+    from PIL import Image as _Img
+    img = _Img.new("RGB", (120, 80), (30, 80, 160))
+    buf = _io.BytesIO()
+    img.save(buf, format="JPEG", quality=70)
+    return "data:image/jpeg;base64," + _b64.b64encode(buf.getvalue()).decode()
+
+
+def test_manual_upload_with_custom_photo(auth_headers, created_ids):
+    """Admin uploads own photo -> watermarked uploaded image used, AI image skipped."""
+    data_url = _tiny_jpeg_b64()
+    payload = {
+        "title": "TEST custom photo path with 2026 and 42 facts",
+        "content": "Reuters reported on January 5 2026 that 42 countries signed the pact worth 7.5 billion dollars.",
+        "category": "दुनिया",
+        "image_base64": data_url,
+    }
+    r = requests.post(f"{API}/manual-upload", json=payload,
+                      headers=auth_headers, timeout=AI_TIMEOUT)
+    assert r.status_code == 200, r.text
+    a = r.json()
+    assert a["status"] == "pending"
+    assert a["ai_processed"] is True
+    assert a["watermark_text"] == SITE_NAME
+    assert a["image_url"].startswith("data:image/jpeg;base64,")
+    # Small uploaded image should produce a much smaller data URL than a typical AI image.
+    assert len(a["image_url"]) < 200_000, f"custom image too big: {len(a['image_url'])}"
+    # Facts preserved
+    body = a["rewritten_article"]
+    for tok in ["42", "2026", "7.5"]:
+        assert tok in body, f"missing fact {tok}"
+    # Hindi rewrite present
+    assert re.search(r"[\u0900-\u097F]", a["rewritten_headline"])
+    created_ids["ids"].append(a["id"])
+    created_ids["custom_photo_id"] = a["id"]
+    created_ids["custom_photo_len"] = len(a["image_url"])
+
+
+def test_manual_upload_without_photo_uses_ai(auth_headers, created_ids):
+    """No image_base64 -> AI generates image (larger data URL)."""
+    payload = {
+        "title": "TEST AI image path baseline",
+        "content": "The United Nations announced on February 1 2026 a new 12 billion dollar climate fund.",
+        "category": "दुनिया",
+    }
+    r = requests.post(f"{API}/manual-upload", json=payload,
+                      headers=auth_headers, timeout=AI_TIMEOUT)
+    assert r.status_code == 200, r.text
+    a = r.json()
+    assert a["ai_processed"] is True
+    assert a["image_url"].startswith("data:image/jpeg;base64,")
+    created_ids["ids"].append(a["id"])
+    # Compare sizes: AI image should be considerably larger than tiny custom-photo one
+    if created_ids.get("custom_photo_len"):
+        assert len(a["image_url"]) > created_ids["custom_photo_len"], \
+            f"AI image ({len(a['image_url'])}) not larger than custom ({created_ids['custom_photo_len']})"
+
+
+def test_manual_upload_no_token_still_401():
+    """Even with image_base64 the endpoint is protected."""
+    r = requests.post(f"{API}/manual-upload",
+                      json={"title": "x", "content": "y", "image_base64": _tiny_jpeg_b64()},
+                      timeout=20)
+    assert r.status_code == 401
+
+
 def test_cleanup(auth_headers, created_ids):
     for aid in created_ids["ids"]:
         requests.delete(f"{API}/articles/{aid}", headers=auth_headers, timeout=15)

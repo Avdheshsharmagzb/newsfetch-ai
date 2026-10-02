@@ -1,0 +1,20 @@
+{
+  "summary": "Iteration 4 tested the NEW optional custom-photo upload feature end-to-end. Backend: 31/31 pytest passing including 3 new tests (custom-photo path, AI-image path, auth protection with image). Frontend: full Playwright flow validated — admin login via /control-login, open manual-upload-modal, upload a photo (preview + remove button visible), submit, modal closes with success toast, new pending card appears whose image_url is the watermarked uploaded photo (data:image/jpeg;base64, 5103 bytes — much smaller than typical AI image). Submission WITHOUT photo also works and produces AI image draft. Regression: public home shows 'Ghaziabad Times' with no admin anchors, /admin redirects to /control-login when logged out, gt_token stored on login. Iteration-3 bugs (settings watermark rebrand + email-only lockout 429) verified FIXED.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "process_item: AI image generation is skipped when custom image provided — correct. But if add_watermark raises on malformed base64, art.image_url stays empty and the AI fallback is NOT triggered (the `if not art.image_url` check only runs inside the try block after rewrite). Behavior is acceptable (admin controls the input) but worth logging; currently only logger.error is emitted.",
+    "ManualUpload.image_base64 has no server-side size cap; a hostile admin could POST a very large data URL. Frontend caps at 8MB, but backend should enforce a limit too (defense in depth).",
+    "server.py is still ~660 lines — consider splitting into routers as flagged previously."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (31/31)", "frontend": "100%"},
+  "test_credentials": "admin@ghaziabadtimes.com / Gzb#Times@2026$Secure (gt_token in localStorage)",
+  "seed_data_creation": "No new seed. 5 TEST-prefixed draft articles created during testing were deleted via DELETE /api/articles/{id}.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend tests now cover custom-photo path (test_manual_upload_with_custom_photo) and AI image baseline (test_manual_upload_without_photo_uses_ai) plus a 401 check with image payload. Size comparison asserts custom data URL < 200KB and smaller than AI output. All iteration 1-3 regressions remain green.",
+  "rca of the issue": "N/A — feature works as specified; no bugs reproduced."
+}

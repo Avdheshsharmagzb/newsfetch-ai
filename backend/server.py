@@ -414,7 +414,7 @@ async def site_info():
 @api_router.post("/auth/login")
 async def login(req: LoginRequest, request: Request):
     email = req.email.lower().strip()
-    ident = f"{request.client.host if request.client else 'x'}:{email}"
+    ident = email  # key lockout by email only (client IP is unreliable behind ingress)
     attempt = await db.login_attempts.find_one({"_id": ident})
     now = datetime.now(timezone.utc)
     if attempt and attempt.get("count", 0) >= 5:
@@ -614,6 +614,8 @@ async def seed_data():
     await seed_admin()
     # rebrand old watermark text for display consistency
     await db.articles.update_many({"watermark_text": "MyNews"}, {"$set": {"watermark_text": SITE_NAME}})
+    await db.settings.update_one({"_id": "global", "watermark_text": "MyNews"},
+                                 {"$set": {"watermark_text": SITE_NAME}})
     if await db.articles.count_documents({}) == 0:
         for s in SEED_ARTICLES:
             art = Article(

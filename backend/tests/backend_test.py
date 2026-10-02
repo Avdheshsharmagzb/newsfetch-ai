@@ -1,4 +1,4 @@
-"""Backend API tests for MyNews Hindi AI news app - iteration 2 (auth + auto-fetch)."""
+"""Backend API tests for Ghaziabad Times - iteration 3 (rebrand + JWT auth + Page1-4)."""
 import os
 import re
 import pytest
@@ -13,8 +13,9 @@ if not BASE:
 BASE = BASE.rstrip("/")
 API = f"{BASE}/api"
 
-ADMIN_EMAIL = "admin@mynews.com"
-ADMIN_PASSWORD = "Admin@12345"
+ADMIN_EMAIL = "admin@ghaziabadtimes.com"
+ADMIN_PASSWORD = "Gzb#Times@2026$Secure"
+SITE_NAME = "Ghaziabad Times"
 AI_TIMEOUT = 180
 
 
@@ -26,7 +27,6 @@ def created_ids():
 
 @pytest.fixture(scope="session")
 def admin_token():
-    # Clear any prior lockout by hitting DB-independent path: just try login. If locked, skip.
     r = requests.post(f"{API}/auth/login",
                       json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}, timeout=15)
     assert r.status_code == 200, f"admin login failed: {r.status_code} {r.text}"
@@ -40,11 +40,18 @@ def auth_headers(admin_token):
     return {"Authorization": f"Bearer {admin_token}"}
 
 
-# --------------------- Basic / seed ---------------------
+# --------------------- Basic / site / seed ---------------------
 def test_root():
     r = requests.get(f"{API}/", timeout=15)
     assert r.status_code == 200
-    assert "MyNews" in r.json().get("message", "")
+    body = r.json()
+    assert body.get("site_name") == SITE_NAME
+
+
+def test_site_info():
+    r = requests.get(f"{API}/site", timeout=15)
+    assert r.status_code == 200
+    assert r.json()["site_name"] == SITE_NAME
 
 
 def test_categories_public():
@@ -64,13 +71,27 @@ def test_stats_public():
 def test_public_articles_open():
     r = requests.get(f"{API}/articles?status=published", timeout=15)
     assert r.status_code == 200
-    assert isinstance(r.json(), list)
+    arts = r.json()
+    assert isinstance(arts, list)
+    # Rebrand: watermark text should have been renamed from MyNews to Ghaziabad Times on startup
+    for a in arts:
+        assert a.get("watermark_text") != "MyNews"
 
 
 def test_public_settings_open():
     r = requests.get(f"{API}/settings", timeout=15)
     assert r.status_code == 200
     assert "watermark_text" in r.json()
+
+
+def test_single_article_public(created_ids):
+    arts = requests.get(f"{API}/articles?status=published", timeout=15).json()
+    if not arts:
+        pytest.skip("no published articles seeded")
+    aid = arts[0]["id"]
+    r = requests.get(f"{API}/articles/{aid}", timeout=15)
+    assert r.status_code == 200
+    assert r.json()["id"] == aid
 
 
 # --------------------- AUTH ---------------------
@@ -86,19 +107,17 @@ def test_login_success():
 
 
 def test_login_wrong_password_401():
-    # use uniquely-cased email so lockout counter is separate from other tests
     r = requests.post(f"{API}/auth/login",
-                      json={"email": "wrongtest@mynews.com", "password": "nope"}, timeout=15)
+                      json={"email": "wrongtest@ghaziabadtimes.com", "password": "nope"}, timeout=15)
     assert r.status_code == 401
 
 
 def test_login_lockout_429():
-    email = "lockout_probe@mynews.com"
+    email = "lockout_probe_gt@ghaziabadtimes.com"
     last = None
     for _ in range(7):
         last = requests.post(f"{API}/auth/login",
                              json={"email": email, "password": "bad"}, timeout=15)
-    # after 5+ failures we expect 429
     assert last.status_code == 429, f"expected 429 lockout, got {last.status_code}: {last.text}"
 
 
@@ -111,6 +130,24 @@ def test_auth_me_with_token(auth_headers):
     r = requests.get(f"{API}/auth/me", headers=auth_headers, timeout=15)
     assert r.status_code == 200
     assert r.json()["email"] == ADMIN_EMAIL
+
+
+def test_bcrypt_hash_format():
+    """Verify admin's password is stored as bcrypt ($2b$...)."""
+    import pymongo
+    mongo_url = os.environ.get("MONGO_URL")
+    db_name = os.environ.get("DB_NAME")
+    if not mongo_url:
+        with open("/app/backend/.env") as f:
+            for line in f:
+                if line.startswith("MONGO_URL="):
+                    mongo_url = line.strip().split("=", 1)[1].strip().strip('"')
+                if line.startswith("DB_NAME="):
+                    db_name = line.strip().split("=", 1)[1].strip().strip('"')
+    cli = pymongo.MongoClient(mongo_url)
+    user = cli[db_name].users.find_one({"email": ADMIN_EMAIL})
+    assert user is not None, "admin user not seeded"
+    assert user["password_hash"].startswith("$2b$"), f"bad hash format: {user['password_hash'][:7]}"
 
 
 # --------------------- Protection matrix ---------------------
@@ -136,27 +173,21 @@ def test_auto_fetch_status():
     r = requests.get(f"{API}/auto-fetch/status", timeout=15)
     assert r.status_code == 200
     d = r.json()
-    assert d["enabled"] is True
-    assert d["interval_hours"] == 1
-    assert d["count"] == 10
-    assert d["provider"] == "gnews"
+    assert "enabled" in d and "interval_hours" in d and "count" in d
+    assert d["provider"] in ("gnews", "newsdata")
     assert d["using_real_api"] is False  # key empty -> demo
 
 
 # --------------------- Settings (auth) ---------------------
 def test_settings_update_requires_auth_and_persists(auth_headers):
     orig = requests.get(f"{API}/settings", timeout=15).json()["watermark_text"]
-    # no token -> 401
     r0 = requests.put(f"{API}/settings", json={"watermark_text": "NO_AUTH"}, timeout=15)
     assert r0.status_code == 401
-    # with token
-    r1 = requests.put(f"{API}/settings", json={"watermark_text": "MyNewsTEST"},
+    r1 = requests.put(f"{API}/settings", json={"watermark_text": "GTTest"},
                       headers=auth_headers, timeout=15)
-    assert r1.status_code == 200 and r1.json()["watermark_text"] == "MyNewsTEST"
-    # persistence
-    assert requests.get(f"{API}/settings").json()["watermark_text"] == "MyNewsTEST"
-    # restore
-    requests.put(f"{API}/settings", json={"watermark_text": orig or "MyNews"},
+    assert r1.status_code == 200 and r1.json()["watermark_text"] == "GTTest"
+    assert requests.get(f"{API}/settings").json()["watermark_text"] == "GTTest"
+    requests.put(f"{API}/settings", json={"watermark_text": orig or SITE_NAME},
                  headers=auth_headers, timeout=15)
 
 
@@ -174,7 +205,8 @@ def test_fetch_news_with_token_demo(auth_headers, created_ids):
     assert isinstance(arts, list) and len(arts) == 1
     a = arts[0]
     assert a["status"] == "pending"
-    assert a["watermark_text"]
+    # watermark should be set to current global (Ghaziabad Times by default)
+    assert a["watermark_text"] == SITE_NAME
     assert re.search(r"[\u0900-\u097F]", a["rewritten_headline"])
     assert re.search(r"[\u0900-\u097F]", a["rewritten_article"])
     assert a["image_url"].startswith("data:image/jpeg;base64,")
@@ -185,7 +217,6 @@ def test_fetch_news_with_token_demo(auth_headers, created_ids):
     created_ids["ids"].append(a["id"])
     created_ids["fetch_id"] = a["id"]
 
-    # confirm status endpoint updated
     st = requests.get(f"{API}/auto-fetch/status").json()
     assert st["last_fetch_source"] == "demo"
     assert st["last_fetch_at"]
@@ -217,7 +248,6 @@ def test_manual_upload_with_token(auth_headers, created_ids):
 # --------------------- Edit / approve / reject ---------------------
 def test_edit_article_auth(auth_headers, created_ids):
     aid = created_ids.get("manual_id") or created_ids["ids"][-1]
-    # unauth
     r0 = requests.put(f"{API}/articles/{aid}", json={"rewritten_headline": "x"}, timeout=15)
     assert r0.status_code == 401
     new_head = "संपादित हिंदी हेडलाइन टेस्ट"

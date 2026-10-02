@@ -1,0 +1,35 @@
+{
+  "summary": "Iteration 3 (Ghaziabad Times rebrand + Page 1-4 newspaper nav + hide-admin-link + secure /control-login) tested end-to-end. Backend pytest: 25/28 passed. Frontend Playwright: public home, admin redirect, login (wrong+correct), token storage, logout all PASS. TWO real bugs found: (1) watermark global settings doc still says 'MyNews' so newly fetched article images get wrong watermark; (2) brute-force lockout is bypassable because request.client.host alternates between proxy pod IPs behind ingress.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "/api/settings & /api/fetch-news watermark", "issue": "GET /api/settings returns watermark_text='MyNews'. Startup rebrand migration only runs on articles collection, not on settings doc. As a result, new fetched/manual-upload articles bake 'MyNews' into images instead of 'Ghaziabad Times'. Confirmed via test_fetch_news_with_token_demo: freshly fetched article has watermark_text='MyNews'. Fix: in startup migration also run db.settings.update_one({'_id':'global','watermark_text':'MyNews'}, {'$set': {'watermark_text': SITE_NAME}}).", "priority": "HIGH"},
+      {"endpoint": "/api/auth/login lockout", "issue": "Brute-force lockout keyed by (request.client.host, email) but behind the k8s ingress the TCP peer alternates between proxy pod IPs (observed 10.201.4.155 and 10.201.4.156 interleaving). After 7+ wrong attempts the API still returns 401 instead of 429, so an attacker can bypass the 5-attempt lockout by letting the LB round-robin. Fix: key the counter by email only, or trust X-Forwarded-For.", "priority": "CRITICAL"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Patch startup migration to rebrand settings.watermark_text from 'MyNews' to 'Ghaziabad Times' (also safe to always set to SITE_NAME on cold start if value equals the old default).",
+    "Fix brute-force lockout key: either drop IP from identifier (ident = email) or respect X-Forwarded-For header, otherwise 5-attempt protection is defeated in production."
+  ],
+  "critical_code_review_comments": [
+    "server.py line 616 only rebrands articles collection; settings doc with 'MyNews' persists, defeating the rebrand for newly generated images. Add a settings rebrand update_one.",
+    "login() uses request.client.host which is the per-pod ingress peer IP; counter splits across pods. Use trusted X-Forwarded-For or email-only ident.",
+    "ProtectedRoute shows a spinner when user === null forever if /auth/me hangs — add timeout fallback.",
+    "server.py still 650 lines; recommend splitting into routers (auth, articles, ai, news_provider) as recommended last iteration.",
+    "No admin link anywhere public — verified via DOM anchor scan on / (only /, /article/:id present). PublicHeader + Home footer confirmed clean."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "89% (25/28 — 2 failures = real product bugs, 1 cascading)", "frontend": "100%"},
+  "test_credentials": "admin@ghaziabadtimes.com / Gzb#Times@2026$Secure (confirmed working; bcrypt $2b$ hash in DB)",
+  "seed_data_creation": "No new seed. Test cleanup deletes any TEST-prefixed manual upload / fetch articles created during run.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend tests at /app/backend/tests/backend_test.py now target Ghaziabad Times creds. 3 tests failing are REAL bugs (watermark migration + lockout bypass + a cascading KeyError once fetch-news bug is fixed the approve-article test will pass automatically). Frontend fully OK: masthead 'Ghaziabad Times', 4 page-nav tabs, no admin anchors on public DOM, /admin→/control-login redirect, gt_token stored/cleared correctly, login-error renders Hindi message. auto-fetch-badge DOM exists but was reported visible=False once due to loading timing; retry with waitForSelector after login.",
+  "rca of the issue": "Watermark bug RCA: get_watermark_text() reads from settings.global doc; that doc was set to 'MyNews' in previous iterations and never rebranded on startup — only db.articles.update_many(..., 'MyNews' -> SITE_NAME) runs. Repro: GET /api/settings -> {'watermark_text':'MyNews'}; POST /api/fetch-news -> returned article.watermark_text='MyNews'. Lockout bug RCA: backend logs show POSTs alternating between source IPs 10.201.4.155 and 10.201.4.156 for the same client, confirming request.client.host does not identify the real client; the ident '(ip,email)' therefore partitions the counter across pods. Mitigation: migrate settings.global on startup AND key lockout by email (or X-Forwarded-For first hop)."
+}
